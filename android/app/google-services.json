@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1005829111775",
+    "project_id": "libya-4604c",
+    "storage_bucket": "libya-4604c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1005829111775:android:04cbcc16d5762ea3ca8e6a",
+        "android_client_info": {
+          "package_name": "com.mohassan.carsliby"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDJtOkWlU6SvaaIRyW8qAF6w8k6G67-Its"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

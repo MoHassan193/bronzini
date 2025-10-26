@@ -1,0 +1,855 @@
+// ignore_for_file: use_build_context_synchronously
+import 'package:carousel_slider/carousel_slider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import '../../../../model/models/item.dart';
+import '../../../../model/utils/constant.dart';
+import '../../../../model/utils/show.dart';
+import '../item_cubit/item_cubit.dart';
+import '../item_cubit/item_state.dart';
+import 'edit_item_page.dart';
+import 'add_item.dart';
+
+/* لوحة الألوان */
+const caramel = Color(0xFFC68B59);
+const ivory = Color(0xFFFFF7EE);
+const cacao = Color(0xFF4E342E);
+
+class MyItemsPage extends StatefulWidget {
+  const MyItemsPage({super.key});
+
+  @override
+  State<MyItemsPage> createState() => _MyItemsPageState();
+}
+
+class _MyItemsPageState extends State<MyItemsPage> {
+  String? _uid;
+  User? _currentUser;
+  String? _selectedCategory;
+  DateTime? _selectedDate;
+  String _searchText = '';
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeUser();
+  }
+
+  void _initializeUser() {
+    _currentUser = FirebaseAuth.instance.currentUser;
+    if (_currentUser != null) {
+      _uid = _currentUser!.uid;
+      setState(() => _loading = false);
+    } else {
+      Show.mo('يجب تسجيل الدخول أولاً', Colors.red);
+      Navigator.pop(context);
+    }
+  }
+
+  /* فلترة محلية بعد جلب كل العناصر */
+  List<ItemModel> _applyFilters(List<ItemModel> items) {
+    return items.where((it) {
+      /* البحث */
+      final matchesSearch = _searchText.isEmpty ||
+          it.name.toLowerCase().contains(_searchText.toLowerCase()) ||
+          (it.description?.toLowerCase().contains(_searchText.toLowerCase()) ?? false);
+
+      /* التصنيف */
+      final matchesCategory = _selectedCategory == null ||
+          it.category == _selectedCategory;
+
+      /* التاريخ (يوم/شهر/سنة) */
+      final matchesDate = _selectedDate == null ||
+          (it.createdAt != null &&
+              DateTime(it.createdAt!.year, it.createdAt!.month, it.createdAt!.day)
+                  .isAtSameMomentAs(DateTime(
+                  _selectedDate!.year, _selectedDate!.month, _selectedDate!.day)));
+
+      return matchesSearch && matchesCategory && matchesDate;
+    }).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading || _uid == null) {
+      return Scaffold(
+        backgroundColor: ivory,
+        appBar: AppBar(
+          title: const Text('عناصري'),
+          backgroundColor: caramel,
+          foregroundColor: ivory,
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return BlocProvider(
+      create: (_) => ItemCubit()..fetchMyItems(_uid!),
+      child: Scaffold(
+        backgroundColor: ivory,
+        appBar: AppBar(
+          title: const Text('عناصري'),
+          backgroundColor: caramel,
+          foregroundColor: ivory,
+          centerTitle: true,
+          elevation: 1,
+          actions: [
+            // إضافة عنصر جديد
+            PopupMenuButton<String>(
+              icon: Container(
+                padding: EdgeInsets.all(6.r),
+                decoration: BoxDecoration(
+                  color: ivory.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8.r),
+                ),
+                child: Icon(Icons.add_rounded, color: ivory, size: 20.r),
+              ),
+              tooltip: 'إضافة عنصر',
+              onSelected: (category) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AddItemPage(category: category),
+                  ),
+                ).then((_) {
+                  // إعادة تحميل البيانات بعد العودة
+                  context.read<ItemCubit>().fetchMyItems(_uid!);
+                });
+              },
+              itemBuilder: (_) => mechanicCategories
+                  .map((cat) => PopupMenuItem(
+                value: cat,
+                child: Row(
+                  children: [
+                    Icon(_getCategoryIcon(cat), size: 16.r),
+                    SizedBox(width: 8.w),
+                    Text(cat),
+                  ],
+                ),
+              ))
+                  .toList(),
+            ),
+            SizedBox(width: 8.w),
+          ],
+        ),
+        body: Column(
+          children: [
+            _buildFilters(context),
+            Expanded(
+              child: BlocBuilder<ItemCubit, ItemState>(
+                builder: (_, state) {
+                  if (state is ItemLoading) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          CircularProgressIndicator(color: caramel),
+                          SizedBox(height: 16.h),
+                          const Text('جاري تحميل عناصرك...'),
+                        ],
+                      ),
+                    );
+                  }
+
+                  if (state is ItemError) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.error_outline_rounded,
+                            size: 64.r,
+                            color: Colors.red.shade300,
+                          ),
+                          SizedBox(height: 16.h),
+                          Text(
+                            'خطأ في تحميل البيانات',
+                            style: TextStyle(
+                              fontSize: 16.sp,
+                              fontWeight: FontWeight.w600,
+                              color: cacao,
+                            ),
+                          ),
+                          SizedBox(height: 8.h),
+                          Text(
+                            state.message,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          SizedBox(height: 16.h),
+                          ElevatedButton.icon(
+                            onPressed: () => context.read<ItemCubit>().fetchMyItems(_uid!),
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('إعادة المحاولة'),
+                            style: ElevatedButton.styleFrom(backgroundColor: caramel),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  final allItems = state is ItemLoaded ? state.items : <ItemModel>[];
+                  final filteredItems = _applyFilters(allItems);
+
+                  if (allItems.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.inventory_2_outlined,
+                            size: 64.r,
+                            color: Colors.grey.shade400,
+                          ),
+                          SizedBox(height: 16.h),
+                          Text(
+                            'لا توجد عناصر بعد',
+                            style: TextStyle(
+                              fontSize: 18.sp,
+                              fontWeight: FontWeight.w600,
+                              color: cacao,
+                            ),
+                          ),
+                          SizedBox(height: 8.h),
+                          Text(
+                            'ابدأ بإضافة عنصرك الأول',
+                            style: TextStyle(
+                              fontSize: 14.sp,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          SizedBox(height: 24.h),
+                          ElevatedButton.icon(
+                            onPressed: () => _showAddItemOptions(),
+                            icon: const Icon(Icons.add),
+                            label: const Text('إضافة عنصر'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: caramel,
+                              foregroundColor: Colors.white,
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 24.w,
+                                vertical: 12.h,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  if (filteredItems.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.search_off_rounded,
+                            size: 64.r,
+                            color: Colors.grey.shade400,
+                          ),
+                          SizedBox(height: 16.h),
+                          const Text('لا توجد عناصر مطابقة للبحث'),
+                          SizedBox(height: 16.h),
+                          ElevatedButton(
+                            onPressed: () => _clearFilters(),
+                            child: const Text('مسح الفلاتر'),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+
+                  return RefreshIndicator(
+                    onRefresh: () async {
+                      context.read<ItemCubit>().fetchMyItems(_uid!);
+                    },
+                    color: caramel,
+                    child: Column(
+                      children: [
+                        // إحصائيات سريعة
+                        if (allItems.isNotEmpty) _buildStatsBar(allItems),
+
+                        // قائمة العناصر
+                        Expanded(
+                          child: ListView.separated(
+                            padding: EdgeInsets.all(12.w),
+                            itemCount: filteredItems.length,
+                            separatorBuilder: (_, __) => SizedBox(height: 12.h),
+                            itemBuilder: (_, i) => _ItemTile(
+                              item: filteredItems[i],
+                              onEdit: () => _editItem(filteredItems[i]),
+                              onDelete: () => _deleteItem(filteredItems[i]),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatsBar(List<ItemModel> items) {
+    final totalItems = items.length;
+    final itemsWithPrice = items.where((item) => item.price != null).length;
+    final itemsWithoutPrice = totalItems - itemsWithPrice;
+    final pricesSum = items
+        .where((item) => item.price != null)
+        .fold<double>(0, (sum, item) => sum + item.price!);
+    final averagePrice = itemsWithPrice > 0 ? pricesSum / itemsWithPrice : 0.0;
+
+    return Container(
+      margin: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: caramel.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8.r),
+        border: Border.all(color: caramel.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _StatItem(
+            icon: Icons.inventory_2_rounded,
+            label: 'العناصر',
+            value: '$totalItems',
+            color: caramel,
+          ),
+          _StatItem(
+            icon: Icons.attach_money_rounded,
+            label: 'بسعر',
+            value: '$itemsWithPrice',
+            color: Colors.green,
+          ),
+          _StatItem(
+            icon: Icons.money_off_rounded,
+            label: 'بدون سعر',
+            value: '$itemsWithoutPrice',
+            color: Colors.orange,
+          ),
+          if (averagePrice > 0)
+            _StatItem(
+              icon: Icons.trending_up_rounded,
+              label: 'متوسط السعر',
+              value: '${averagePrice.toStringAsFixed(0)} د.ل',
+              color: Colors.blue,
+            ),
+        ],
+      ),
+    );
+  }
+
+  /*──────── واجهة الفلاتر المحسنة ────────*/
+  Widget _buildFilters(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: caramel.withOpacity(0.1),
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          /* مربع البحث */
+          TextField(
+            decoration: InputDecoration(
+              hintText: 'بحث بالاسم أو الوصف...',
+              prefixIcon: Icon(Icons.search_rounded, color: caramel),
+              suffixIcon: _searchText.isNotEmpty
+                  ? IconButton(
+                icon: const Icon(Icons.clear),
+                onPressed: () => setState(() => _searchText = ''),
+              )
+                  : null,
+              filled: true,
+              fillColor: ivory,
+              contentPadding: EdgeInsets.symmetric(vertical: 0, horizontal: 12.w),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10.r),
+                borderSide: BorderSide.none,
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10.r),
+                borderSide: BorderSide(color: caramel, width: 2),
+              ),
+            ),
+            onChanged: (v) => setState(() => _searchText = v.trim()),
+          ),
+          SizedBox(height: 8.h),
+
+          /* صف التصنيف والتاريخ */
+          Row(
+            children: [
+              /* قائمة التصنيفات */
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  value: _selectedCategory,
+                  decoration: InputDecoration(
+                    hintText: 'كل التصنيفات',
+                    filled: true,
+                    fillColor: ivory,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10.r),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  items: mechanicCategories
+                      .map((c) => DropdownMenuItem(
+                    value: c,
+                    child: Row(
+                      children: [
+                        Icon(_getCategoryIcon(c), size: 16.r, color: caramel),
+                        SizedBox(width: 8.w),
+                        Expanded(child: Text(c, overflow: TextOverflow.ellipsis)),
+                      ],
+                    ),
+                  ))
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedCategory = v),
+                ),
+              ),
+              SizedBox(width: 8.w),
+
+              /* اختيار التاريخ */
+              Expanded(
+                child: InkWell(
+                  onTap: () async {
+                    final now = DateTime.now();
+                    final picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedDate ?? now,
+                      firstDate: DateTime(now.year - 1),
+                      lastDate: now,
+                      locale: const Locale('ar'),
+                    );
+                    if (picked != null) {
+                      setState(() => _selectedDate = picked);
+                    }
+                  },
+                  child: Container(
+                    height: 48.h,
+                    decoration: BoxDecoration(
+                      color: ivory,
+                      borderRadius: BorderRadius.circular(10.r),
+                    ),
+                    alignment: Alignment.center,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.calendar_today_rounded, size: 16.r, color: caramel),
+                        SizedBox(width: 6.w),
+                        Expanded(
+                          child: Text(
+                            _selectedDate == null
+                                ? 'كل التواريخ'
+                                : '${_selectedDate!.day}/${_selectedDate!.month}/${_selectedDate!.year}',
+                            style: TextStyle(fontSize: 12.sp),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (_selectedDate != null)
+                          GestureDetector(
+                            onTap: () => setState(() => _selectedDate = null),
+                            child: Icon(Icons.close_rounded, size: 16.r, color: Colors.grey),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAddItemOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16.r)),
+      ),
+      builder: (_) => Container(
+        padding: EdgeInsets.all(16.w),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'اختر تصنيف العنصر',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w700,
+                color: cacao,
+              ),
+            ),
+            SizedBox(height: 16.h),
+            ...mechanicCategories.map((cat) => ListTile(
+              leading: Icon(_getCategoryIcon(cat), color: caramel),
+              title: Text(cat),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => AddItemPage(category: cat)),
+                ).then((_) => context.read<ItemCubit>().fetchMyItems(_uid!));
+              },
+            )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _clearFilters() {
+    setState(() {
+      _searchText = '';
+      _selectedCategory = null;
+      _selectedDate = null;
+    });
+  }
+
+  void _editItem(ItemModel item) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => EditItemPage(item: item)),
+    ).then((_) => context.read<ItemCubit>().fetchMyItems(_uid!));
+  }
+
+  void _deleteItem(ItemModel item) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('حذف العنصر'),
+        content: Text('هل أنت متأكد من حذف "${item.name}"؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.read<ItemCubit>().deleteItem(item, _uid!);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('حذف', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _getCategoryIcon(String category) {
+    switch (category) {
+      case 'قطع غيار':
+        return Icons.build_rounded;
+      case 'إطارات':
+        return Icons.car_repair_rounded;
+      case 'أدوات':
+        return Icons.handyman_rounded;
+      default:
+        return Icons.miscellaneous_services_rounded;
+    }
+  }
+}
+
+/*──────────────── بطاقة عنصر واحدة محسنة ─────────────────*/
+class _ItemTile extends StatelessWidget {
+  final ItemModel item;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _ItemTile({
+    required this.item,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onEdit,
+      child: Ink(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14.r),
+          boxShadow: [
+            BoxShadow(
+              color: caramel.withOpacity(.15),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (item.images.isNotEmpty)
+              Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(14.r)),
+                    child: CarouselSlider.builder(
+                      itemCount: item.images.length,
+                      itemBuilder: (_, idx, __) => Image.network(
+                        item.images[idx],
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.grey.shade200,
+                          child: Icon(
+                            item.isService ? Icons.build : Icons.inventory_2,
+                            color: Colors.grey,
+                            size: 32.r,
+                          ),
+                        ),
+                      ),
+                      options: CarouselOptions(height: 120.h, viewportFraction: 1),
+                    ),
+                  ),
+                  // علامة النوع
+                  Positioned(
+                    top: 8.h,
+                    left: 8.w,
+                    child: Container(
+                      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                      decoration: BoxDecoration(
+                        color: item.isService ? Colors.blue : Colors.green,
+                        borderRadius: BorderRadius.circular(12.r),
+                      ),
+                      child: Text(
+                        item.isService ? 'خدمة' : 'منتج',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 10.sp,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  // علامة جديد
+                  if (item.isNew)
+                    Positioned(
+                      top: 8.h,
+                      right: 8.w,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+                        decoration: BoxDecoration(
+                          color: Colors.orange,
+                          borderRadius: BorderRadius.circular(12.r),
+                        ),
+                        child: Text(
+                          'جديد',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.sp,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  // عدد الصور
+                  if (item.hasMultipleImages)
+                    Positioned(
+                      bottom: 8.h,
+                      right: 8.w,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 2.h),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(8.r),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.photo_library, color: Colors.white, size: 12.r),
+                            SizedBox(width: 2.w),
+                            Text(
+                              '${item.imageCount}',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10.sp,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            Padding(
+              padding: EdgeInsets.all(12.w),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item.name,
+                                style: TextStyle(
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.w700,
+                                  color: cacao,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 2.h),
+                        Text(
+                          item.formattedCreatedDate,
+                          style: TextStyle(
+                            fontSize: 11.sp,
+                            color: cacao.withOpacity(.6),
+                          ),
+                        ),
+                        if (item.description?.isNotEmpty ?? false)
+                          Padding(
+                            padding: EdgeInsets.only(top: 2.h),
+                            child: Text(
+                              item.shortDescription,
+                              style: TextStyle(
+                                fontSize: 11.sp,
+                                color: Colors.grey.shade600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 8.w),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (item.price != null)
+                        Container(
+                          padding: EdgeInsets.symmetric(vertical: 4.h, horizontal: 8.w),
+                          decoration: BoxDecoration(
+                            color: caramel.withOpacity(.15),
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                          child: Text(
+                            item.formattedPrice,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: caramel,
+                              fontSize: 12.sp,
+                            ),
+                          ),
+                        ),
+                      SizedBox(height: 4.h),
+                      PopupMenuButton<String>(
+                        icon: Icon(Icons.more_vert_rounded, color: cacao.withOpacity(.7), size: 18.r),
+                        onSelected: (value) {
+                          switch (value) {
+                            case 'edit':
+                              onEdit();
+                              break;
+                            case 'delete':
+                              onDelete();
+                              break;
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          const PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 16),
+                                SizedBox(width: 8),
+                                Text('تعديل'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, size: 16, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('حذف', style: TextStyle(color: Colors.red)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _StatItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 16.r),
+        SizedBox(height: 2.h),
+        Text(
+          value,
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 12.sp,
+            color: color,
+          ),
+        ),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 9.sp,
+            color: Colors.grey.shade600,
+          ),
+        ),
+      ],
+    );
+  }
+}

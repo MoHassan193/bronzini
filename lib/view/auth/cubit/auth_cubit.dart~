@@ -1,0 +1,111 @@
+import 'package:bloc/bloc.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_state.dart';
+
+class AuthCubit extends Cubit<AuthState> {
+  AuthCubit() : super(AuthInitial());
+
+  final _auth = FirebaseAuth.instance;
+  final _db = FirebaseFirestore.instance;
+
+  String? get currentUid => _auth.currentUser?.uid;
+
+  Future<void> register({
+    required String name,
+    required String password,
+    required String phone,
+    required String role,
+  }) async {
+    emit(AuthLoading());
+
+    if (!phone.startsWith('+218')) {
+      emit(AuthError('يجب إدخال رقم ليبي يبدأ بـ +218'));
+      return;
+    }
+
+    try {
+      final emailFake = '${phone.replaceAll('+', '')}@me.ly';
+
+      final cred = await _auth.createUserWithEmailAndPassword(
+        email: emailFake,
+        password: password,
+      );
+
+      await _db.collection('users').doc(cred.user!.uid).set({
+        'name': name,
+        'phone': phone,
+        'role': role,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('is_logged_in', true);
+      await prefs.setString('user_role', role);
+      await prefs.setString('user_phone', phone);
+
+      emit(AuthAuthenticated(role: role));
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
+  }
+
+  Future<void> login({
+    required String phone,
+    required String password,
+  }) async {
+    emit(AuthLoading());
+
+    try {
+      final userQuery = await _db
+          .collection('users')
+          .where('phone', isEqualTo: phone)
+          .limit(1)
+          .get();
+
+      if (userQuery.docs.isEmpty) {
+        emit(AuthError('المستخدم غير موجود'));
+        return;
+      }
+
+      final userData = userQuery.docs.first.data();
+      final userRole = userData['role'] as String;
+
+      final email = '${phone.replaceAll('+', '')}@me.ly';
+
+      await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('is_logged_in', true);
+      await prefs.setString('user_role', userRole);
+      await prefs.setString('user_phone', phone);
+
+      emit(AuthAuthenticated(role: userRole));
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
+  }
+
+  Future<void> checkRememberedLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final remembered = prefs.getBool('is_logged_in') ?? false;
+    final userRole = prefs.getString('user_role');
+
+    if (remembered && _auth.currentUser != null && userRole != null) {
+      emit(AuthAuthenticated(role: userRole));
+    }
+  }
+
+  void logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('is_logged_in');
+    await prefs.remove('user_role');
+    await prefs.remove('user_phone');
+    await _auth.signOut();
+    emit(AuthInitial());
+  }
+}

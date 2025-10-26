@@ -1,0 +1,2 @@
+D:/mobarmgon/libya/android/app/.cxx/RelWithDebInfo/14183i1n/x86/CMakeFiles/edit_cache.dir
+D:/mobarmgon/libya/android/app/.cxx/RelWithDebInfo/14183i1n/x86/CMakeFiles/rebuild_cache.dir
